@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>File on Send</title>
+  <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #1b1b1f; --muted: #6b6f76; --line: #e3e5e8;
+      --accent: #00539f; --accent-soft: #e8f0f9; --ok: #1f7a3a; --err: #b42318;
+      --new: #8a5a00; --new-soft: #fff6e0; --input: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1f1f22; --fg: #ececf0; --muted: #a0a4ab; --line: #34363b;
+        --accent: #7fb3ea; --accent-soft: #23324a; --ok: #6fcf8f; --err: #ff8a80;
+        --new: #f0c060; --new-soft: #3a3020; --input: #26272b;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 14px 14px 18px; background: var(--bg); color: var(--fg);
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    h1 { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+    .demo { background: var(--new-soft); color: var(--new); padding: 6px 8px; border-radius: 6px; font-size: 12px; margin-bottom: 10px; }
+    .current {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
+      border: 1px dashed var(--line); margin-bottom: 14px;
+    }
+    .current.chosen { border: 1px solid var(--accent); background: var(--accent-soft); }
+    .current .icon { width: 22px; height: 22px; flex: none; color: var(--muted); }
+    .current.chosen .icon { color: var(--accent); }
+    .current .text { flex: 1; min-width: 0; }
+    .current .leafname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .current .sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button {
+      font: inherit; font-size: 13px; border-radius: 6px; padding: 5px 10px; cursor: pointer;
+      border: 1px solid var(--line); background: var(--input); color: var(--fg);
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    @media (prefers-color-scheme: dark) { button.primary { color: #10233a; } }
+    button.link { border: none; background: none; color: var(--accent); padding: 2px 4px; }
+    input[type=search], textarea {
+      width: 100%; font: inherit; color: var(--fg); background: var(--input);
+      border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none;
+    }
+    input[type=search]:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .heading { font-size: 12px; color: var(--muted); margin: 12px 2px 4px; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    .row { padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+    .row:hover, .row.active { background: var(--accent-soft); }
+    .row .leaf { font-weight: 500; }
+    .row .path { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row.new { background: var(--new-soft); margin-top: 6px; }
+    .row.new .leaf { color: var(--new); }
+    .status { min-height: 18px; font-size: 12px; margin-top: 10px; color: var(--muted); }
+    .status.ok { color: var(--ok); } .status.err { color: var(--err); }
+    footer { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted);
+      display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    #settings { margin-top: 12px; }
+    #settings p { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+    textarea { height: 220px; font: 12px/1.45 ui-monospace, Menlo, monospace; resize: vertical; }
+    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="demoBanner" class="demo" hidden>Preview mode — not connected to Outlook. Choices here don't affect any message.</div>
+
+  <h1>File this message in</h1>
+  <div id="current" class="current">
+    <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h3.6c.6 0 1.2.3 1.6.7L12 6h6.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5z"/>
+    </svg>
+    <div class="text">
+      <div class="leafname" id="currentLeaf">Not chosen yet</div>
+      <div class="sub" id="currentPath">Message will stay in Sent Items</div>
+    </div>
+    <button class="link" id="clearBtn" hidden>Clear</button>
+  </div>
+
+  <input type="search" id="search" placeholder="Search folders, or type a new path…" autocomplete="off" spellcheck="false" aria-label="Search folders">
+  <div class="heading" id="listHeading"></div>
+  <ul id="list" role="listbox"></ul>
+  <div id="status" class="status" role="status"></div>
+
+  <section id="settings" hidden>
+    <p>Paste your folder list here, one folder path per line (e.g. <code>Inbox/Students/Advising</code>). The “Export folder list” flow emails you an up-to-date list ready to paste.</p>
+    <textarea id="folderText" spellcheck="false"></textarea>
+    <div class="actions">
+      <button id="cancelBtn">Cancel</button>
+      <button id="saveBtn" class="primary">Save list</button>
+    </div>
+  </section>
+
+  <footer>
+    <span id="listInfo"></span>
+    <button class="link" id="updateBtn">Update list</button>
+  </footer>
+
+  <script type="text/javascript" src="taskpane.js"></script>
+</body>
+</html>
