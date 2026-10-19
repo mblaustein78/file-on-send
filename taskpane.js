@@ -1,10 +1,11 @@
 /*
  * File on Send — folder picker task pane.
  *
- * Choosing a folder tags the message with a category "File: <folder path>".
- * After the message lands in Sent Items, the Power Automate "File sent mail" flow
- * reads that category, moves the message to the folder (creating it if needed),
- * and removes the tag.
+ * Choosing a folder stores the folder path on the message as an add-in custom
+ * property ("fileTo"). Custom properties stay on the copy in Sent Items and are
+ * never sent to recipients. The Power Automate "File sent mail" flow reads the
+ * property from the sent copy and moves the message there (creating the folder
+ * if needed).
  *
  * The folder list lives in the add-in's roaming settings (stored in your mailbox,
  * so it follows you to every Outlook you use). Refresh it by pasting the list that
@@ -13,8 +14,7 @@
 (function () {
   "use strict";
 
-  var FILE_PREFIX = "File: ";
-  var CATEGORY_COLOR = "Preset7"; // blue
+  var PROP = "fileTo";
   var MAX_RECENTS = 8;
   var MAX_RESULTS = 150;
 
@@ -67,6 +67,9 @@
         else reject(r.error);
       };
     }
+    function loadProps() {
+      return new Promise(function (res, rej) { mb.item.loadCustomPropertiesAsync(cb(res, rej)); });
+    }
     return {
       demo: false,
       getSetting: function (k) { return settings.get(k); },
@@ -74,35 +77,21 @@
         Object.keys(obj).forEach(function (k) { settings.set(k, obj[k]); });
         return new Promise(function (res, rej) { settings.saveAsync(cb(res, rej)); });
       },
-      getItemCategories: function () {
-        return new Promise(function (res, rej) { mb.item.categories.getAsync(cb(res, rej)); })
-          .then(function (v) { return (v || []).map(function (c) { return c.displayName; }); });
+      getChoice: function () {
+        return loadProps().then(function (props) { return props.get(PROP) || null; });
       },
-      removeItemCategories: function (names) {
-        if (!names.length) return Promise.resolve();
-        return new Promise(function (res, rej) { mb.item.categories.removeAsync(names, cb(res, rej)); });
-      },
-      addItemCategory: function (name) {
-        // A category must exist in the mailbox's master list before it can be applied.
-        return new Promise(function (res, rej) { mb.masterCategories.getAsync(cb(res, rej)); })
-          .then(function (master) {
-            var exists = (master || []).some(function (c) {
-              return c.displayName.toLowerCase() === name.toLowerCase();
-            });
-            if (exists) return;
-            return new Promise(function (res, rej) {
-              mb.masterCategories.addAsync(
-                [{ displayName: name, color: Office.MailboxEnums.CategoryColor[CATEGORY_COLOR] }],
-                function (r) {
-                  // Ignore "already exists" races.
-                  if (r.status === Office.AsyncResultStatus.Succeeded ||
-                      (r.error && /Duplicate/i.test(r.error.name || r.error.code || ""))) res();
-                  else rej(r.error);
-                });
-            });
+      setChoice: function (path) {
+        return loadProps()
+          .then(function (props) {
+            if (path) props.set(PROP, path); else props.remove(PROP);
+            return new Promise(function (res, rej) { props.saveAsync(cb(res, rej)); });
           })
           .then(function () {
-            return new Promise(function (res, rej) { mb.item.categories.addAsync([name], cb(res, rej)); });
+            // Save the draft too, so the property is on the stored item before Send.
+            // Failure here is harmless; the property is already saved.
+            return new Promise(function (res) {
+              try { mb.item.saveAsync(function () { res(); }); } catch (e) { res(); }
+            });
           });
       }
     };
@@ -111,7 +100,7 @@
   function demoStore() {
     // Lets the pane be opened in a normal browser for testing. Nothing touches Outlook.
     var mem = {};
-    var itemCats = [];
+    var choice = null;
     function ls(k, v) {
       try {
         if (v === undefined) { var s = localStorage.getItem("fos-" + k); return s ? JSON.parse(s) : undefined; }
@@ -130,12 +119,8 @@
       demo: true,
       getSetting: function (k) { return ls(k); },
       setSettings: function (obj) { Object.keys(obj).forEach(function (k) { ls(k, obj[k]); }); return Promise.resolve(); },
-      getItemCategories: function () { return Promise.resolve(itemCats.slice()); },
-      removeItemCategories: function (names) {
-        itemCats = itemCats.filter(function (c) { return names.indexOf(c) < 0; });
-        return Promise.resolve();
-      },
-      addItemCategory: function (name) { itemCats.push(name); return Promise.resolve(); }
+      getChoice: function () { return Promise.resolve(choice); },
+      setChoice: function (path) { choice = path || null; return Promise.resolve(); }
     };
   }
 
@@ -150,9 +135,8 @@
   }
 
   function readCurrent() {
-    return store.getItemCategories().then(function (names) {
-      var c = names.filter(function (n) { return n.indexOf(FILE_PREFIX) === 0; })[0];
-      current = c ? c.slice(FILE_PREFIX.length) : null;
+    return store.getChoice().then(function (p) {
+      current = p || null;
       renderCurrent();
     });
   }
@@ -177,13 +161,7 @@
     path = normalizePath(path);
     if (!path) return;
     setStatus("Saving…");
-    var name = FILE_PREFIX + path;
-    store.getItemCategories()
-      .then(function (names) {
-        var old = names.filter(function (n) { return n.indexOf(FILE_PREFIX) === 0 && n !== name; });
-        return store.removeItemCategories(old);
-      })
-      .then(function () { return store.addItemCategory(name); })
+    store.setChoice(path)
       .then(function () {
         current = path;
         recents = [path].concat(recents.filter(function (r) { return r.toLowerCase() !== path.toLowerCase(); }))
@@ -210,10 +188,7 @@
   }
 
   function clearChoice() {
-    store.getItemCategories()
-      .then(function (names) {
-        return store.removeItemCategories(names.filter(function (n) { return n.indexOf(FILE_PREFIX) === 0; }));
-      })
+    store.setChoice(null)
       .then(function () { current = null; renderCurrent(); setStatus("Cleared. The message will stay in Sent Items."); })
       .catch(function (e) { setStatus("Couldn't clear: " + (e && e.message || e), "err"); });
   }
