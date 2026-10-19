@@ -1,8 +1,8 @@
 /*
  * File on Send — folder picker task pane.
  *
- * Choosing a folder stores the folder path on the message as an add-in custom
- * property ("fileTo"). Custom properties stay on the copy in Sent Items and are
+ * Choosing a folder stores the folder path on the message two ways: as an add-in
+ * custom property ("fileTo") and as a category "File: <path>". Custom properties stay on the copy in Sent Items and are
  * never sent to recipients. The Power Automate "File sent mail" flow reads the
  * property from the sent copy and moves the message there (creating the folder
  * if needed).
@@ -15,6 +15,8 @@
   "use strict";
 
   var PROP = "fileTo";
+  var FILE_PREFIX = "File: ";
+  var CATEGORY_COLOR = "Preset7"; // blue
   var MAX_RECENTS = 8;
   var MAX_RESULTS = 150;
 
@@ -70,6 +72,29 @@
     function loadProps() {
       return new Promise(function (res, rej) { mb.item.loadCustomPropertiesAsync(cb(res, rej)); });
     }
+    function getCats() {
+      return new Promise(function (res, rej) { mb.item.categories.getAsync(cb(res, rej)); })
+        .then(function (v) { return (v || []).map(function (c) { return c.displayName; }); });
+    }
+    function removeCats(names) {
+      if (!names.length) return Promise.resolve();
+      return new Promise(function (res, rej) { mb.item.categories.removeAsync(names, cb(res, rej)); });
+    }
+    function addCat(name) {
+      return new Promise(function (res, rej) { mb.masterCategories.getAsync(cb(res, rej)); })
+        .then(function (master) {
+          var exists = (master || []).some(function (c) { return c.displayName.toLowerCase() === name.toLowerCase(); });
+          if (exists) return;
+          return new Promise(function (res) {
+            mb.masterCategories.addAsync(
+              [{ displayName: name, color: Office.MailboxEnums.CategoryColor[CATEGORY_COLOR] }],
+              function () { res(); });
+          });
+        })
+        .then(function () {
+          return new Promise(function (res, rej) { mb.item.categories.addAsync([name], cb(res, rej)); });
+        });
+    }
     return {
       demo: false,
       getSetting: function (k) { return settings.get(k); },
@@ -78,13 +103,31 @@
         return new Promise(function (res, rej) { settings.saveAsync(cb(res, rej)); });
       },
       getChoice: function () {
-        return loadProps().then(function (props) { return props.get(PROP) || null; });
+        return loadProps().then(function (props) {
+          var p = props.get(PROP);
+          if (p) return p;
+          return getCats().then(function (names) {
+            var c = names.filter(function (n) { return n.indexOf(FILE_PREFIX) === 0; })[0];
+            return c ? c.slice(FILE_PREFIX.length) : null;
+          });
+        });
       },
       setChoice: function (path) {
         return loadProps()
           .then(function (props) {
             if (path) props.set(PROP, path); else props.remove(PROP);
             return new Promise(function (res, rej) { props.saveAsync(cb(res, rej)); });
+          })
+          .then(function () {
+            // Also mark with a category ("File: <path>"). Categories are known to survive
+            // sending; the flow accepts either mark. Category errors are not fatal.
+            return getCats()
+              .then(function (names) {
+                var old = names.filter(function (n) { return n.indexOf(FILE_PREFIX) === 0; });
+                return removeCats(old);
+              })
+              .then(function () { if (path) return addCat(FILE_PREFIX + path); })
+              .catch(function () {});
           })
           .then(function () {
             // Save the draft too, so the property is on the stored item before Send.
